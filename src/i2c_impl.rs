@@ -9,11 +9,13 @@ pub struct I2c<T: UsbContext> {
 
 impl<T: UsbContext> I2c<T> {
     #[inline]
-    pub fn new(device_handle: DeviceHandle<T>) -> Self {
-        Self {
+    fn open(device_handle: DeviceHandle<T>) -> Result<Self> {
+        // TODO: do we need to claim the device / activate the configuration here?
+        protocol::check_device(&device_handle)?;
+        Ok(Self {
             device_handle,
             address: 0u16,
-        }
+        })
     }
 }
 
@@ -21,7 +23,7 @@ impl I2c<GlobalContext> {
     pub fn open_single_device() -> Result<Self> {
         match rusb::open_device_with_vid_pid(protocol::ID_VENDOR, protocol::ID_PRODUCT) {
             None => Err(rusb::Error::NoDevice.into()),
-            Some(device_handle) => Ok(Self::new(device_handle)),
+            Some(device_handle) => Self::open(device_handle),
         }
     }
 }
@@ -45,7 +47,7 @@ impl<T: UsbContext> Read for I2c<T> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         protocol::transfer(
             &self.device_handle,
-            &[i2c::Message::Read {
+            &mut [i2c::Message::Read {
                 address: self.address,
                 data: buf,
                 flags: Default::default(),
@@ -59,7 +61,7 @@ impl<T: UsbContext> Write for I2c<T> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         protocol::transfer(
             &self.device_handle,
-            &[i2c::Message::Write {
+            &mut [i2c::Message::Write {
                 address: self.address,
                 data: buf,
                 flags: Default::default(),
