@@ -1,0 +1,8 @@
+[package]
+name = "i2c-tiny-usb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+i2c = "0.1.0"
+rusb = "0.9.4"
