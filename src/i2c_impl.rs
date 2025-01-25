@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 
 pub struct I2c<T: UsbContext> {
     device_handle: DeviceHandle<T>,
+    supported_flags: (i2c::ReadFlags, i2c::WriteFlags),
     address: u16,
 }
 
@@ -11,9 +12,10 @@ impl<T: UsbContext> I2c<T> {
     #[inline]
     fn open(device_handle: DeviceHandle<T>) -> Result<Self> {
         // TODO: do we need to claim the device / activate the configuration here?
-        protocol::check_device(&device_handle)?;
+        let supported_flags = protocol::check_device(&device_handle)?;
         Ok(Self {
             device_handle,
+            supported_flags,
             address: 0u16,
         })
     }
@@ -82,7 +84,7 @@ const _: () = assert_impl_readwrite::<I2c<GlobalContext>>();
 
 impl<T: UsbContext> i2c::BulkTransfer for I2c<T> {
     fn i2c_transfer_support(&mut self) -> Result<(i2c::ReadFlags, i2c::WriteFlags)> {
-        Ok(protocol::supported_flags())
+        Ok(self.supported_flags)
     }
 
     fn i2c_transfer(&mut self, messages: &mut [i2c::Message]) -> Result<()> {

@@ -26,6 +26,7 @@ mod constants {
 
     // possible values for the CMD_GET_FUNC response
     pub const I2C_FUNC_I2C: u32 = 0x00000001;
+    pub const I2C_FUNC_PROTOCOL_MANGLING: u32 = 0x00000004;
 
     // per-message flags
     pub const I2C_M_RD: u16 = 0x0001;
@@ -68,14 +69,6 @@ fn encode_write_flags(flags: WriteFlags) -> u16 {
         result |= I2C_M_NOSTART;
     }
     result
-}
-
-#[inline]
-pub(crate) fn supported_flags() -> (ReadFlags, WriteFlags) {
-    (
-        ReadFlags::NACK | ReadFlags::REVERSE_RW | ReadFlags::NO_START,
-        WriteFlags::IGNORE_NACK | WriteFlags::REVERSE_RW | WriteFlags::NO_START,
-    )
 }
 
 pub(crate) fn transfer<T: UsbContext>(
@@ -122,13 +115,29 @@ pub(crate) fn transfer<T: UsbContext>(
     todo!();
 }
 
-pub(crate) fn check_device<T: UsbContext>(dev: &DeviceHandle<T>) -> Result<()> {
-    // check the functionality bitmask; at the very least the device should support I2C
+/// Issues some test commands and probes the functionality of the i2c-tiny-usb device. Returns
+/// supported read and write flags.
+pub(crate) fn check_device<T: UsbContext>(
+    dev: &DeviceHandle<T>,
+) -> Result<(ReadFlags, WriteFlags)> {
+    // check the functionality bitmask
     let mut buf_func = [0u8; 4];
     dev.read_control(REQ_TYPE, CMD_GET_FUNC, 0, 0, &mut buf_func, TIMEOUT)?;
-    if buf_func != I2C_FUNC_I2C.to_le_bytes() {
+    let func = u32::from_le_bytes(buf_func);
+    if func & I2C_FUNC_I2C == 0 {
+        // the device doesn't support plain I2C (non-SMBUS) transfers
         return Err(rusb::Error::NotSupported.into());
     }
+
+    // non-standard I2C transfers are only possible if the device supports protocol mangling
+    let supported_flags = if func & I2C_FUNC_PROTOCOL_MANGLING != 0 {
+        (
+            ReadFlags::NACK | ReadFlags::REVERSE_RW | ReadFlags::NO_START,
+            WriteFlags::IGNORE_NACK | WriteFlags::REVERSE_RW | WriteFlags::NO_START,
+        )
+    } else {
+        Default::default()
+    };
 
     // test the echo command with a bunch of arbitrary values
     for x in [0u16, 0xaaaa, 0x5555, 0xffff, 0x55aa, 0xaa55, 0x0f0f, 0xf0f0] {
@@ -139,5 +148,5 @@ pub(crate) fn check_device<T: UsbContext>(dev: &DeviceHandle<T>) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(supported_flags)
 }
