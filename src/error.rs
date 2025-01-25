@@ -1,37 +1,48 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Error(rusb::Error);
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("USB error")]
+    Usb(#[from] rusb::Error),
+
+    #[error("no acknowledgement from the i2c device")]
+    Nack,
+}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-impl From<rusb::Error> for Error {
-    fn from(e: rusb::Error) -> Self {
-        Self(e)
+impl From<Error> for std::io::Error {
+    fn from(value: Error) -> Self {
+        use std::io::ErrorKind;
+        match value {
+            Error::Usb(rusb::Error::InvalidParam) => ErrorKind::InvalidInput.into(),
+            Error::Usb(rusb::Error::Access) => ErrorKind::PermissionDenied.into(),
+            Error::Usb(rusb::Error::NoDevice) => ErrorKind::ConnectionRefused.into(),
+            Error::Usb(rusb::Error::NotFound) => ErrorKind::Unsupported.into(),
+            Error::Usb(rusb::Error::Busy) => ErrorKind::ResourceBusy.into(),
+            Error::Usb(rusb::Error::Timeout) => ErrorKind::TimedOut.into(),
+            Error::Usb(rusb::Error::Pipe) => ErrorKind::BrokenPipe.into(),
+            Error::Usb(rusb::Error::Interrupted) => ErrorKind::Interrupted.into(),
+            Error::Usb(rusb::Error::NoMem) => ErrorKind::OutOfMemory.into(),
+            Error::Usb(rusb::Error::NotSupported) => ErrorKind::InvalidInput.into(),
+            Error::Usb(_) => ErrorKind::Other.into(),
+            Error::Nack => ErrorKind::NotConnected.into(),
+        }
     }
 }
 
 impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        use std::io::ErrorKind;
-        Error(match err.kind() {
-            ErrorKind::PermissionDenied => rusb::Error::Access,
-            ErrorKind::ResourceBusy => rusb::Error::Busy,
-            ErrorKind::TimedOut => rusb::Error::Timeout,
-            _ => rusb::Error::Other,
-        })
-    }
-}
-
-impl From<Error> for std::io::Error {
-    fn from(value: Error) -> Self {
-        use rusb::Error as RE;
-        use std::io::ErrorKind;
-        match value.0 {
-            RE::Access => ErrorKind::PermissionDenied,
-            RE::Busy => ErrorKind::ResourceBusy,
-            RE::Timeout => ErrorKind::TimedOut,
-            // TODO: handle more cases where it makes sense?
-            _ => ErrorKind::Other,
+    fn from(value: std::io::Error) -> Self {
+        match value.kind() {
+            std::io::ErrorKind::InvalidInput => Error::Usb(rusb::Error::InvalidParam),
+            std::io::ErrorKind::PermissionDenied => Error::Usb(rusb::Error::Access),
+            std::io::ErrorKind::ConnectionRefused => Error::Usb(rusb::Error::NoDevice),
+            std::io::ErrorKind::Unsupported => Error::Usb(rusb::Error::NotFound),
+            std::io::ErrorKind::ResourceBusy => Error::Usb(rusb::Error::Busy),
+            std::io::ErrorKind::TimedOut => Error::Usb(rusb::Error::Timeout),
+            std::io::ErrorKind::BrokenPipe => Error::Usb(rusb::Error::Pipe),
+            std::io::ErrorKind::Interrupted => Error::Usb(rusb::Error::Interrupted),
+            std::io::ErrorKind::OutOfMemory => Error::Usb(rusb::Error::NoMem),
+            std::io::ErrorKind::NotConnected => Error::Nack,
+            _ => Error::Usb(rusb::Error::Other),
         }
-        .into()
     }
 }

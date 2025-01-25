@@ -2,7 +2,7 @@ use i2c::Message;
 use rusb::*;
 use std::time::Duration;
 
-use crate::Result;
+use crate::{Error, Result};
 
 #[allow(dead_code)]
 mod constants {
@@ -63,8 +63,7 @@ pub(crate) fn transfer<T: UsbContext>(
         let mut status: [u8; 1] = [0x0];
         dev.read_control(REQ_TYPE, CMD_GET_STATUS, 0, 0, &mut status, TIMEOUT)?;
         if status[0] == STATUS_ADDRESS_NAK {
-            // TODO: better error for NACK?
-            return Err(rusb::Error::NoDevice.into());
+            return Err(Error::Nack);
         }
     }
 
