@@ -28,6 +28,7 @@ mod constants {
     pub const I2C_FUNC_I2C: u32 = 0x00000001;
 
     // per-message flags
+    pub const I2C_M_RD: u16 = 0x0001;
     pub const I2C_M_NOSTART: u16 = 0x4000;
     pub const I2C_M_REV_DIR_ADDR: u16 = 0x2000;
     pub const I2C_M_IGNORE_NAK: u16 = 0x1000;
@@ -42,7 +43,7 @@ pub const REQ_TYPE: u8 =
     rusb::constants::LIBUSB_REQUEST_TYPE_VENDOR | rusb::constants::LIBUSB_RECIPIENT_INTERFACE;
 
 fn encode_read_flags(flags: ReadFlags) -> u16 {
-    let mut result = 0;
+    let mut result = I2C_M_RD; // needs to be set for all I2C reads
     if flags.contains(ReadFlags::NACK) {
         result |= I2C_M_NO_RD_ACK;
     }
