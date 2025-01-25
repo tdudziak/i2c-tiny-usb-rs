@@ -1,4 +1,4 @@
-use i2c::Message;
+use i2c::{Message, ReadFlags, WriteFlags};
 use rusb::*;
 use std::time::Duration;
 
@@ -26,6 +26,12 @@ mod constants {
 
     // possible values for the CMD_GET_FUNC response
     pub const I2C_FUNC_I2C: u32 = 0x00000001;
+
+    // per-message flags
+    pub const I2C_M_NOSTART: u16 = 0x4000;
+    pub const I2C_M_REV_DIR_ADDR: u16 = 0x2000;
+    pub const I2C_M_IGNORE_NAK: u16 = 0x1000;
+    pub const I2C_M_NO_RD_ACK: u16 = 0x0800;
 }
 use constants::*;
 pub use constants::{ID_PRODUCT, ID_VENDOR};
@@ -35,11 +41,46 @@ pub const TIMEOUT: Duration = Duration::from_secs(1);
 pub const REQ_TYPE: u8 =
     rusb::constants::LIBUSB_REQUEST_TYPE_VENDOR | rusb::constants::LIBUSB_RECIPIENT_INTERFACE;
 
+fn encode_read_flags(flags: ReadFlags) -> u16 {
+    let mut result = 0;
+    if flags.contains(ReadFlags::NACK) {
+        result |= I2C_M_NO_RD_ACK;
+    }
+    if flags.contains(ReadFlags::REVERSE_RW) {
+        result |= I2C_M_REV_DIR_ADDR;
+    }
+    if flags.contains(ReadFlags::NO_START) {
+        result |= I2C_M_NOSTART;
+    }
+    result
+}
+
+fn encode_write_flags(flags: WriteFlags) -> u16 {
+    let mut result = 0;
+    if flags.contains(WriteFlags::IGNORE_NACK) {
+        result |= I2C_M_IGNORE_NAK;
+    }
+    if flags.contains(WriteFlags::REVERSE_RW) {
+        result |= I2C_M_REV_DIR_ADDR;
+    }
+    if flags.contains(WriteFlags::NO_START) {
+        result |= I2C_M_NOSTART;
+    }
+    result
+}
+
+#[inline]
+pub(crate) fn supported_flags() -> (ReadFlags, WriteFlags) {
+    (
+        ReadFlags::NACK | ReadFlags::REVERSE_RW | ReadFlags::NO_START,
+        WriteFlags::IGNORE_NACK | WriteFlags::REVERSE_RW | WriteFlags::NO_START,
+    )
+}
+
 pub(crate) fn transfer<T: UsbContext>(
     dev: &DeviceHandle<T>,
     messages: &mut [Message],
 ) -> Result<()> {
-    let flags = 0; // TODO: should this ever be anything else?
     let i_message_end = messages.len() - 1;
     for (i_message, message) in messages.iter_mut().enumerate() {
         let mut cmd = CMD_I2C_IO;
@@ -51,11 +92,21 @@ pub(crate) fn transfer<T: UsbContext>(
         }
 
         match message {
-            Message::Read { address, data, .. } => {
-                dev.read_control(REQ_TYPE, cmd, flags, *address, data, TIMEOUT)?;
+            Message::Read {
+                address,
+                data,
+                flags,
+            } => {
+                let flag_bits = encode_read_flags(*flags);
+                dev.read_control(REQ_TYPE, cmd, flag_bits, *address, data, TIMEOUT)?;
             }
-            Message::Write { address, data, .. } => {
-                dev.write_control(REQ_TYPE, cmd, flags, *address, data, TIMEOUT)?;
+            Message::Write {
+                address,
+                data,
+                flags,
+            } => {
+                let flag_bits = encode_write_flags(*flags);
+                dev.write_control(REQ_TYPE, cmd, flag_bits, *address, data, TIMEOUT)?;
             }
         }
 

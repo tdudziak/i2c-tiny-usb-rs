@@ -82,7 +82,7 @@ const _: () = assert_impl_readwrite::<I2c<GlobalContext>>();
 
 impl<T: UsbContext> i2c::BulkTransfer for I2c<T> {
     fn i2c_transfer_support(&mut self) -> Result<(i2c::ReadFlags, i2c::WriteFlags)> {
-        Ok(Default::default())
+        Ok(protocol::supported_flags())
     }
 
     fn i2c_transfer(&mut self, messages: &mut [i2c::Message]) -> Result<()> {
