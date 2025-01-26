@@ -1,8 +1,7 @@
 use i2c::{Message, ReadFlags, WriteFlags};
-use rusb::*;
 use std::time::Duration;
 
-use crate::{Error, Result};
+use crate::{Connection, Error, Result};
 
 #[allow(dead_code)]
 mod constants {
@@ -43,8 +42,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(1);
 pub const REQ_TYPE: u8 =
     rusb::constants::LIBUSB_REQUEST_TYPE_VENDOR | rusb::constants::LIBUSB_RECIPIENT_INTERFACE;
 
-fn dev_read<T: UsbContext>(
-    dev: &DeviceHandle<T>,
+fn dev_read(
+    dev: &impl Connection,
     command: u8,
     flags: ReadFlags,
     arg: u16,
@@ -69,8 +68,8 @@ fn dev_read<T: UsbContext>(
     }
 }
 
-fn dev_write<T: UsbContext>(
-    dev: &DeviceHandle<T>,
+fn dev_write(
+    dev: &impl Connection,
     command: u8,
     flags: WriteFlags,
     arg: u16,
@@ -95,10 +94,7 @@ fn dev_write<T: UsbContext>(
     }
 }
 
-pub(crate) fn transfer<T: UsbContext>(
-    dev: &DeviceHandle<T>,
-    messages: &mut [Message],
-) -> Result<()> {
+pub(crate) fn transfer(dev: &impl Connection, messages: &mut [Message]) -> Result<()> {
     if messages.is_empty() {
         return Ok(());
     }
@@ -138,9 +134,7 @@ pub(crate) fn transfer<T: UsbContext>(
 
 /// Issues some test commands and probes the functionality of the i2c-tiny-usb device. Returns
 /// supported read and write flags.
-pub(crate) fn check_device<T: UsbContext>(
-    dev: &DeviceHandle<T>,
-) -> Result<(ReadFlags, WriteFlags)> {
+pub(crate) fn check_device(dev: &impl Connection) -> Result<(ReadFlags, WriteFlags)> {
     // check the functionality bitmask
     let mut buf_func = [0u8; 4];
     dev_read(dev, CMD_GET_FUNC, ReadFlags::empty(), 0, &mut buf_func)?;
@@ -170,4 +164,131 @@ pub(crate) fn check_device<T: UsbContext>(
     }
 
     Ok(supported_flags)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connection::mock::MockConnection;
+
+    #[test]
+    fn test_failed_check() {
+        let dev = MockConnection::new();
+        assert!(check_device(&dev).is_err());
+    }
+
+    #[test]
+    fn test_check_device() {
+        let dev = MockConnection::new();
+        dev.schedule_read(
+            CMD_GET_FUNC,              // request
+            I2C_M_RD,                  // value
+            0,                         // index
+            &[0x05, 0x00, 0x00, 0x00], // data: I2C + FUNC_PROTOCOL_MANGLING
+        );
+        for x in [0u16, 0xaaaa, 0x5555, 0xffff, 0x55aa, 0xaa55, 0x0f0f, 0xf0f0] {
+            dev.schedule_read(
+                CMD_ECHO,         // request
+                I2C_M_RD,         // value
+                x,                // index
+                &x.to_le_bytes(), // data
+            );
+        }
+        let (read_flags, write_flags) = check_device(&dev).unwrap();
+        assert!(read_flags.contains(ReadFlags::NACK));
+        assert!(read_flags.contains(ReadFlags::REVERSE_RW));
+        assert!(read_flags.contains(ReadFlags::NO_START));
+        assert!(write_flags.contains(WriteFlags::IGNORE_NACK));
+        assert!(write_flags.contains(WriteFlags::REVERSE_RW));
+        assert!(write_flags.contains(WriteFlags::NO_START));
+    }
+
+    #[test]
+    fn test_transfer_zero_length() {
+        let dev = MockConnection::new();
+        let mut msgs: [Message; 0] = [];
+        transfer(&dev, &mut msgs).unwrap();
+        assert!(!dev.has_writes(), "no write I2C transactions expected");
+    }
+
+    #[test]
+    fn test_transfer_single_write() {
+        let dev = MockConnection::new();
+        dev.schedule_read(CMD_GET_STATUS, I2C_M_RD, 0, &[STATUS_IDLE]);
+        let mut msgs = [Message::Write {
+            address: 0x50,
+            data: &[0x11, 0x22],
+            flags: WriteFlags::empty(),
+        }];
+
+        transfer(&dev, &mut msgs).unwrap();
+        assert!(
+            dev.pop_write(
+                CMD_I2C_IO | CMD_I2C_BEGIN | CMD_I2C_END,
+                0,    // flags for WriteFlags::empty()
+                0x50, // address
+                &[0x11, 0x22]
+            ),
+            "expected write transaction was not found"
+        );
+        assert!(!dev.has_writes(), "no more write I2C transactions expected");
+    }
+
+    #[test]
+    fn test_transfer_single_read() {
+        let dev = MockConnection::new();
+        dev.schedule_read(
+            CMD_I2C_IO | CMD_I2C_BEGIN | CMD_I2C_END,
+            I2C_M_RD,
+            0x50,
+            &[0xAA, 0xBB, 0xCC],
+        );
+        dev.schedule_read(CMD_GET_STATUS, I2C_M_RD, 0, &[STATUS_IDLE]);
+
+        let mut read_buf = [0u8; 3];
+        let mut msgs = [Message::Read {
+            address: 0x50,
+            data: &mut read_buf,
+            flags: ReadFlags::empty(),
+        }];
+        transfer(&dev, &mut msgs).unwrap();
+        assert!(read_buf == [0xAA, 0xBB, 0xCC]);
+        assert!(!dev.has_writes(), "no write I2C transactions expected");
+    }
+
+    #[test]
+    fn test_transfer_two_messages() {
+        let dev = MockConnection::new();
+
+        // response and status for the read message
+        dev.schedule_read(5, I2C_M_RD, 0x10, &[0x01, 0x02]);
+        dev.schedule_read(CMD_GET_STATUS, I2C_M_RD, 0, &[STATUS_IDLE]);
+
+        // status for the write message
+        dev.schedule_read(CMD_GET_STATUS, I2C_M_RD, 0, &[STATUS_IDLE]);
+
+        let mut read_buf = [0u8; 2];
+        let mut msgs = [
+            Message::Read {
+                address: 0x10,
+                data: &mut read_buf,
+                flags: ReadFlags::empty(),
+            },
+            Message::Write {
+                address: 0x20,
+                data: &[0xAA, 0xBB, 0xCC],
+                flags: WriteFlags::empty(),
+            },
+        ];
+
+        transfer(&dev, &mut msgs).unwrap();
+        assert_eq!(read_buf, [0x01, 0x02]);
+        assert!(dev.pop_write(
+            CMD_I2C_IO | CMD_I2C_END, // = 6
+            0,                        // WriteFlags::empty
+            0x20,                     // address
+            &[0xAA, 0xBB, 0xCC]       // data
+        ));
+        assert!(!dev.has_writes(), "no more write I2C transactions expected");
+    }
 }
