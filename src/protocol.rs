@@ -43,39 +43,66 @@ pub const TIMEOUT: Duration = Duration::from_secs(1);
 pub const REQ_TYPE: u8 =
     rusb::constants::LIBUSB_REQUEST_TYPE_VENDOR | rusb::constants::LIBUSB_RECIPIENT_INTERFACE;
 
-fn encode_read_flags(flags: ReadFlags) -> u16 {
-    let mut result = I2C_M_RD; // needs to be set for all I2C reads
+fn dev_read<T: UsbContext>(
+    dev: &DeviceHandle<T>,
+    command: u8,
+    flags: ReadFlags,
+    arg: u16,
+    data: &mut [u8],
+) -> Result<()> {
+    let mut flag_bits = I2C_M_RD; // needs to be set for all I2C reads
     if flags.contains(ReadFlags::NACK) {
-        result |= I2C_M_NO_RD_ACK;
+        flag_bits |= I2C_M_NO_RD_ACK;
     }
     if flags.contains(ReadFlags::REVERSE_RW) {
-        result |= I2C_M_REV_DIR_ADDR;
+        flag_bits |= I2C_M_REV_DIR_ADDR;
     }
     if flags.contains(ReadFlags::NO_START) {
-        result |= I2C_M_NOSTART;
+        flag_bits |= I2C_M_NOSTART;
     }
-    result
+
+    let n_read = dev.read_control(REQ_TYPE, command, flag_bits, arg, data, TIMEOUT)?;
+    if n_read != data.len() {
+        Err(rusb::Error::Io.into())
+    } else {
+        Ok(())
+    }
 }
 
-fn encode_write_flags(flags: WriteFlags) -> u16 {
-    let mut result = 0;
+fn dev_write<T: UsbContext>(
+    dev: &DeviceHandle<T>,
+    command: u8,
+    flags: WriteFlags,
+    arg: u16,
+    data: &[u8],
+) -> Result<()> {
+    let mut flag_bits = 0;
     if flags.contains(WriteFlags::IGNORE_NACK) {
-        result |= I2C_M_IGNORE_NAK;
+        flag_bits |= I2C_M_IGNORE_NAK;
     }
     if flags.contains(WriteFlags::REVERSE_RW) {
-        result |= I2C_M_REV_DIR_ADDR;
+        flag_bits |= I2C_M_REV_DIR_ADDR;
     }
     if flags.contains(WriteFlags::NO_START) {
-        result |= I2C_M_NOSTART;
+        flag_bits |= I2C_M_NOSTART;
     }
-    result
+
+    let n_written = dev.write_control(REQ_TYPE, command, flag_bits, arg, data, TIMEOUT)?;
+    if n_written != data.len() {
+        Err(rusb::Error::Io.into())
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn transfer<T: UsbContext>(
     dev: &DeviceHandle<T>,
     messages: &mut [Message],
 ) -> Result<()> {
-    let i_message_end = messages.len() - 1;
+    if messages.is_empty() {
+        return Ok(());
+    }
+    let i_message_end = messages.len() - 1; // no underflow because of is_empty() check above
     for (i_message, message) in messages.iter_mut().enumerate() {
         let mut cmd = CMD_I2C_IO;
         if i_message == 0 {
@@ -90,29 +117,23 @@ pub(crate) fn transfer<T: UsbContext>(
                 address,
                 data,
                 flags,
-            } => {
-                let flag_bits = encode_read_flags(*flags);
-                dev.read_control(REQ_TYPE, cmd, flag_bits, *address, data, TIMEOUT)?;
-            }
+            } => dev_read(dev, cmd, *flags, *address, data)?,
             Message::Write {
                 address,
                 data,
                 flags,
-            } => {
-                let flag_bits = encode_write_flags(*flags);
-                dev.write_control(REQ_TYPE, cmd, flag_bits, *address, data, TIMEOUT)?;
-            }
+            } => dev_write(dev, cmd, *flags, *address, data)?,
         }
 
         // read status and check for NACK condition
         let mut status: [u8; 1] = [0x0];
-        dev.read_control(REQ_TYPE, CMD_GET_STATUS, 0, 0, &mut status, TIMEOUT)?;
+        dev_read(dev, CMD_GET_STATUS, ReadFlags::empty(), 0, &mut status)?;
         if status[0] == STATUS_ADDRESS_NAK {
             return Err(Error::Nack);
         }
     }
 
-    todo!();
+    Ok(())
 }
 
 /// Issues some test commands and probes the functionality of the i2c-tiny-usb device. Returns
@@ -122,7 +143,7 @@ pub(crate) fn check_device<T: UsbContext>(
 ) -> Result<(ReadFlags, WriteFlags)> {
     // check the functionality bitmask
     let mut buf_func = [0u8; 4];
-    dev.read_control(REQ_TYPE, CMD_GET_FUNC, 0, 0, &mut buf_func, TIMEOUT)?;
+    dev_read(dev, CMD_GET_FUNC, ReadFlags::empty(), 0, &mut buf_func)?;
     let func = u32::from_le_bytes(buf_func);
     if func & I2C_FUNC_I2C == 0 {
         // the device doesn't support plain I2C (non-SMBUS) transfers
@@ -142,7 +163,7 @@ pub(crate) fn check_device<T: UsbContext>(
     // test the echo command with a bunch of arbitrary values
     for x in [0u16, 0xaaaa, 0x5555, 0xffff, 0x55aa, 0xaa55, 0x0f0f, 0xf0f0] {
         let mut buf_echo = [0u8; 2];
-        dev.read_control(REQ_TYPE, CMD_ECHO, 0, x, &mut buf_echo, TIMEOUT)?;
+        dev_read(dev, CMD_ECHO, ReadFlags::empty(), x, &mut buf_echo)?;
         if buf_echo != x.to_le_bytes() {
             return Err(rusb::Error::Other.into());
         }
