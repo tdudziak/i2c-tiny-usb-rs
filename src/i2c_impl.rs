@@ -11,7 +11,7 @@ pub struct I2c<T: UsbContext> {
 impl<T: UsbContext> I2c<T> {
     #[inline]
     fn open(device_handle: DeviceHandle<T>) -> Result<Self> {
-        // TODO: do we need to claim the device / activate the configuration here?
+        device_handle.claim_interface(0)?;
         let supported_flags = protocol::check_device(&device_handle)?;
         Ok(Self {
             device_handle,

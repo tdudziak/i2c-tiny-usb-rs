@@ -39,8 +39,6 @@ pub use constants::{ID_PRODUCT, ID_VENDOR};
 
 // control transfer parameters
 pub const TIMEOUT: Duration = Duration::from_secs(1);
-pub const REQ_TYPE: u8 =
-    rusb::constants::LIBUSB_REQUEST_TYPE_VENDOR | rusb::constants::LIBUSB_RECIPIENT_INTERFACE;
 
 fn dev_read(
     dev: &impl Connection,
@@ -59,8 +57,12 @@ fn dev_read(
     if flags.contains(ReadFlags::NO_START) {
         flag_bits |= I2C_M_NOSTART;
     }
+    let req_type = {
+        use rusb::constants::*;
+        LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_INTERFACE | LIBUSB_ENDPOINT_IN
+    };
 
-    let n_read = dev.read_control(REQ_TYPE, command, flag_bits, arg, data, TIMEOUT)?;
+    let n_read = dev.read_control(req_type, command, flag_bits, arg, data, TIMEOUT)?;
     if n_read != data.len() {
         Err(rusb::Error::Io.into())
     } else {
@@ -85,8 +87,12 @@ fn dev_write(
     if flags.contains(WriteFlags::NO_START) {
         flag_bits |= I2C_M_NOSTART;
     }
+    let req_type = {
+        use rusb::constants::*;
+        LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_INTERFACE | LIBUSB_ENDPOINT_OUT
+    };
 
-    let n_written = dev.write_control(REQ_TYPE, command, flag_bits, arg, data, TIMEOUT)?;
+    let n_written = dev.write_control(req_type, command, flag_bits, arg, data, TIMEOUT)?;
     if n_written != data.len() {
         Err(rusb::Error::Io.into())
     } else {
@@ -157,8 +163,14 @@ pub(crate) fn check_device(dev: &impl Connection) -> Result<(ReadFlags, WriteFla
     // test the echo command with a bunch of arbitrary values
     for x in [0u16, 0xaaaa, 0x5555, 0xffff, 0x55aa, 0xaa55, 0x0f0f, 0xf0f0] {
         let mut buf_echo = [0u8; 2];
-        dev_read(dev, CMD_ECHO, ReadFlags::empty(), x, &mut buf_echo)?;
-        if buf_echo != x.to_le_bytes() {
+        let req_type = {
+            use rusb::constants::*;
+            LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_INTERFACE | LIBUSB_ENDPOINT_IN
+        };
+        // we cannot use dev_read() for CMD_ECHO since it passes the argument as wValue (normally
+        // used for read flags)
+        let n_read = dev.read_control(req_type, CMD_ECHO, x, 0, &mut buf_echo, TIMEOUT)?;
+        if n_read != 2 || u16::from_le_bytes(buf_echo) != x {
             return Err(rusb::Error::Other.into());
         }
     }
@@ -189,8 +201,8 @@ mod tests {
         for x in [0u16, 0xaaaa, 0x5555, 0xffff, 0x55aa, 0xaa55, 0x0f0f, 0xf0f0] {
             dev.schedule_read(
                 CMD_ECHO,         // request
-                I2C_M_RD,         // value
-                x,                // index
+                x,                // value
+                0,                // index
                 &x.to_le_bytes(), // data
             );
         }
