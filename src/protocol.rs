@@ -114,25 +114,31 @@ pub(crate) fn transfer(dev: &impl Connection, messages: &mut [Message]) -> Resul
             cmd |= CMD_I2C_END;
         }
 
-        match message {
+        let op_result = match message {
             Message::Read {
                 address,
                 data,
                 flags,
-            } => dev_read(dev, cmd, *flags, *address, data)?,
+            } => dev_read(dev, cmd, *flags, *address, data),
             Message::Write {
                 address,
                 data,
                 flags,
-            } => dev_write(dev, cmd, *flags, *address, data)?,
-        }
+            } => dev_write(dev, cmd, *flags, *address, data),
+        };
 
-        // read status and check for NACK condition
+        // Typically when there is no acknowledgement, the `op_result` will be a failure because the
+        // corresponding USB control transfer is not acknowledged either. We check the status
+        // regardless to distinguish this from other errors and in case there are devices that
+        // behave differently.
         let mut status: [u8; 1] = [0x0];
         dev_read(dev, CMD_GET_STATUS, ReadFlags::empty(), 0, &mut status)?;
         if status[0] == STATUS_ADDRESS_NAK {
             return Err(Error::Nack);
         }
+
+        // we still want to return an error if there's no NACK but the main operation failed
+        op_result?;
     }
 
     Ok(())
