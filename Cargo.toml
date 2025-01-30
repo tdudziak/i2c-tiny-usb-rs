@@ -8,5 +8,9 @@ i2c = "0.1.0"
 rusb = "0.9.4"
 thiserror = "2.0.11"
 
+[dev-dependencies]
+serial_test = "*"
+
 [features]
 hw-tests = []
+hw-tests-program-eeprom = []
