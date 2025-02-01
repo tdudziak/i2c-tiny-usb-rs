@@ -3,11 +3,14 @@ use std::time::Duration;
 
 use crate::{Connection, Error, Result};
 
+// i2c-tiny-usb and compatible devices can use multiple USB VID+PID combinations
+pub(crate) const KNOWN_VENDOR_PRODUCT_IDS: [(u16, u16); 2] = [
+    (0x0403, 0xc631), // FTDI
+    (0x1c40, 0x0534), // EZPrototypes
+];
+
 #[allow(dead_code)]
 mod constants {
-    pub const ID_VENDOR: u16 = 0x0403;
-    pub const ID_PRODUCT: u16 = 0xc631;
-
     pub const CMD_ECHO: u8 = 0;
     pub const CMD_GET_FUNC: u8 = 1;
     pub const CMD_SET_DELAY: u8 = 2;
@@ -35,7 +38,6 @@ mod constants {
     pub const I2C_M_NO_RD_ACK: u16 = 0x0800;
 }
 use constants::*;
-pub use constants::{ID_PRODUCT, ID_VENDOR};
 
 // control transfer parameters
 pub const TIMEOUT: Duration = Duration::from_secs(1);

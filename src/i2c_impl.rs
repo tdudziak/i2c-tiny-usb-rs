@@ -1,5 +1,5 @@
 use crate::{error::*, protocol};
-use rusb::{DeviceHandle, GlobalContext, UsbContext};
+use rusb::{Device, DeviceHandle, GlobalContext, UsbContext};
 use std::io::{Read, Write};
 
 pub struct I2c<T: UsbContext> {
@@ -10,7 +10,8 @@ pub struct I2c<T: UsbContext> {
 
 impl<T: UsbContext> I2c<T> {
     #[inline]
-    fn open(device_handle: DeviceHandle<T>) -> Result<Self> {
+    fn open(device: &Device<T>) -> Result<Self> {
+        let device_handle = device.open()?;
         device_handle.claim_interface(0)?;
         let supported_flags = protocol::check_device(&device_handle)?;
         Ok(Self {
@@ -23,10 +24,14 @@ impl<T: UsbContext> I2c<T> {
 
 impl I2c<GlobalContext> {
     pub fn open_single_device() -> Result<Self> {
-        match rusb::open_device_with_vid_pid(protocol::ID_VENDOR, protocol::ID_PRODUCT) {
-            None => Err(rusb::Error::NoDevice.into()),
-            Some(device_handle) => Self::open(device_handle),
+        let devs = crate::devices();
+        if devs.is_empty() {
+            return Err(rusb::Error::NoDevice.into());
         }
+        if devs.len() > 1 {
+            return Err(rusb::Error::Other.into());
+        }
+        I2c::open(&devs[0])
     }
 }
 
