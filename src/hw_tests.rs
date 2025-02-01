@@ -99,6 +99,22 @@ const EEPROM_TEST_PATTERN: [u8; 16] = [
     0xaa, 0x55, 0xa0, 0xa5, 0x0a, 0x5a, 0xff, 0x00, 0x12, 0xca, 0xff, 0xee, 0x12, 0x23, 0x34, 0x45,
 ];
 
+#[cfg(feature = "hw-tests-program-eeprom")]
+fn pre_program_eeprom(bus: &mut I2c<impl rusb::UsbContext>) {
+    use i2c::Message;
+
+    let mut data = [0u8; 17];
+    data[0] = 0x20;
+    data[1..].copy_from_slice(&EEPROM_TEST_PATTERN);
+
+    bus.i2c_transfer(&mut [Message::Write {
+        address: 0x50,
+        data: &data,
+        flags: Default::default(),
+    }])
+    .unwrap();
+}
+
 #[test]
 #[serial(device)]
 pub fn test_eeprom_read() {
@@ -134,18 +150,58 @@ pub fn test_eeprom_read() {
     assert_eq!(&read_buf[..0x20], &read_buf[0x20..]);
 }
 
-#[cfg(feature = "hw-tests-program-eeprom")]
-fn pre_program_eeprom(bus: &mut I2c<impl rusb::UsbContext>) {
-    use i2c::Message;
+#[test]
+#[serial(device)]
+#[ignore] // FIXME: currently fails in a way that breaks other tests
+pub fn test_error_recovery() {
+    fn check_valid_read(bus: &mut I2c<impl rusb::UsbContext>) {
+        let mut buf = [0u8; 16];
+        bus.write_all(&[0x20]).unwrap();
+        bus.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, &EEPROM_TEST_PATTERN);
+    }
 
-    let mut data = [0u8; 17];
-    data[0] = 0x20;
-    data[1..].copy_from_slice(&EEPROM_TEST_PATTERN);
+    let mut bus = I2c::open_single_device().unwrap();
+    {
+        #[cfg(feature = "hw-tests-program-eeprom")]
+        pre_program_eeprom(&mut bus);
+    }
+    bus.set_slave_address(0x50, false).unwrap();
+    check_valid_read(&mut bus);
 
-    bus.i2c_transfer(&mut [Message::Write {
-        address: 0x50,
-        data: &data,
-        flags: Default::default(),
-    }])
-    .unwrap();
+    // check that everything still works after a NACK
+    bus.set_slave_address(0x03, false).unwrap();
+    assert!(bus.write_all(&[0]).is_err());
+    bus.set_slave_address(0x50, false).unwrap();
+    check_valid_read(&mut bus);
+
+    // reads of 128 bytes or more seem to fail
+    let mut big_buf = [0u8; 256];
+    bus.write_all(&[0u8]).unwrap();
+    assert!(bus.read_exact(&mut big_buf[..128]).is_err());
+    check_valid_read(&mut bus);
+    assert!(bus.read_exact(&mut big_buf[..256]).is_err());
+    check_valid_read(&mut bus);
+}
+
+#[test]
+#[serial(device)]
+pub fn test_eeprom_big_reads() {
+    let mut bus = I2c::open_single_device().unwrap();
+    let mut buf = [0u8; 256];
+
+    #[cfg(feature = "hw-tests-program-eeprom")]
+    pre_program_eeprom(&mut bus);
+
+    // FIXME: on macOS with a i2c-star firmware device, reads of 102 or bigger time out and reads
+    // 128 or bigger fail immediately. Afterwards, the device gets stuck in an error state and
+    // requires cable unplug/replug. Is this a firmware/library bug or our problem?
+    const MAX_READ: usize = 101;
+
+    for size in 16..=MAX_READ {
+        bus.set_slave_address(0x50, false).unwrap();
+        bus.write_all(&[0x20]).unwrap();
+        bus.read_exact(&mut buf[..size]).unwrap();
+        assert_eq!(&buf[..16], &EEPROM_TEST_PATTERN);
+    }
 }
