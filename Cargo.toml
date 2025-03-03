@@ -2,6 +2,12 @@
 name = "i2c-tiny-usb"
 version = "0.1.0"
 edition = "2021"
+authors = ["Tomasz Dudziak <tomasz.dudziak@gmail.com"]
+description = "Library for communicating with USB-to-I2C adapters supporting the i2c-tiny-usb protocol"
+readme = "README.md"
+homepage = "https://github.com/tdudziak/i2c-tiny-usb-rs"
+repository = "https://github.com/tdudziak/i2c-tiny-usb-rs"
+license = "MIT"
 
 [dependencies]
 i2c = "0.1.0"
@@ -9,7 +15,7 @@ rusb = "0.9.4"
 thiserror = "2.0.11"
 
 [dev-dependencies]
-serial_test = "*"
+serial_test = "3.2.0"
 
 [features]
 hw-tests = []
